@@ -20,6 +20,16 @@ You can also put `index.html` on any static host (Netlify Drop, GitHub Pages, Ve
    Click **Connect MetaMask**, then **Authorize bot**. MetaMask asks for one gas-free signature. That approves a trading key, stored in this browser, which **can place orders but cannot withdraw**.
 4. **Live → Mainnet**: the same steps, with real money. Authorize separately.
 
+## New: wallet scan
+Connect MetaMask and GoalBot scans your wallet on Ethereum, Arbitrum, Base, Optimism, Polygon, BNB Chain, Avalanche and HyperEVM, plus your Hyperliquid trading and spot balances. It shows every holding with its value and what it takes to use it for trading:
+- **Hyperliquid trading balance:** what the bot trades with.
+- **Hyperliquid spot USDC:** **Move to trading** in one MetaMask signature (no gas).
+- **USDC on Arbitrum:** **Deposit to trade**, which switches network and fills in the amount.
+- **Anything else** (ETH, USDT, other networks): shows the swap or bridge step needed first.
+- **Paper mode:** **Use as paper balance** practices with your real wallet size.
+
+Only common tokens are checked, and the scan is read-only. Nothing moves without your MetaMask approval.
+
 ## New in version 2
 - **Multiple markets:** trade up to 6 Hyperliquid perps at once (BTC, ETH, SOL, HYPE…) with one shared goal. Each market has its own chart tab. The leverage budget is split between them, and every stop-loss together can't push the account past your floor.
 - **Your currency:** show everything in AUD, EUR, GBP, JPY and 16 more. Rates are daily reference rates. Hyperliquid itself holds USDC, and the goal stays fixed in USD behind the scenes.

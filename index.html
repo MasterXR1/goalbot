@@ -209,6 +209,29 @@ dialog::backdrop { background: rgba(5,7,11,.66); backdrop-filter: blur(3px) }
 .posrow .ph { display: flex; align-items: center; gap: 8px }
 .posrow .ph .upnl { font-size: 18px; margin-left: auto }
 .posrow .kv { font-size: 12px }
+
+/* ---- v3: wallet scan / portfolio ---- */
+.pf-sum { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; padding: 16px 16px 4px }
+@media (max-width: 760px) { .pf-sum { grid-template-columns: repeat(2, minmax(0,1fr)) } }
+.pf-sum div { background: var(--panel-2); border-radius: 12px; padding: 12px 14px; display: grid; gap: 3px; min-width: 0 }
+.pf-sum span { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; font-weight: 700 }
+.pf-sum b { font: 700 20px var(--display); font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+.pf-sum small { color: var(--faint); font-size: 12px }
+.pf-sum .hi { background: var(--gold-dim); box-shadow: inset 0 0 0 1px rgba(233,185,92,.35) }
+.pf-sum .hi b { color: var(--gold) }
+.net { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap }
+.net i { width: 9px; height: 9px; border-radius: 50%; flex: none }
+.tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; padding: 3px 8px; border-radius: 6px; background: var(--panel-2); color: var(--muted); white-space: nowrap }
+.tag.gold { background: var(--gold-dim); color: var(--gold) }
+td a.lnk { color: var(--info); font-size: 13px; font-weight: 600; text-decoration: none; white-space: nowrap }
+td a.lnk:hover { text-decoration: underline }
+.pf-move { display: flex; gap: 6px; align-items: center; justify-content: flex-end }
+.pf-move input { width: 110px; background: var(--bg); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; font: 13px var(--mono) }
+.pf-foot { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; padding: 10px 16px 14px; color: var(--faint); font-size: 12px }
+.pf-empty { padding: 22px 16px; display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between }
+.pf-empty p { margin: 0; color: var(--muted); max-width: 70ch }
+.spin { display: inline-block; width: 12px; height: 12px; border: 2px solid var(--line-2); border-top-color: var(--gold); border-radius: 50%; animation: sp 0.8s linear infinite; vertical-align: -2px; margin-right: 6px }
+@keyframes sp { to { transform: rotate(360deg) } }
 </style>
 </head>
 <body>
@@ -231,6 +254,7 @@ dialog::backdrop { background: rgba(5,7,11,.66); backdrop-filter: blur(3px) }
 
   <div class="banner warn" id="mainnetBanner">⚠ Live on Mainnet. The bot is trading real money from your account.</div>
   <div class="banner gold" id="doneBanner"></div>
+  <div class="banner warn" id="rangeBanner"></div>
 
   <section class="hero" aria-label="Goal progress">
     <div class="hero-head">
@@ -254,6 +278,13 @@ dialog::backdrop { background: rgba(5,7,11,.66); backdrop-filter: blur(3px) }
       <div class="tick" id="tickStart"><span id="tStart"></span><em>Start</em></div>
       <div class="tick goalt" style="left:100%"><span id="tGoal"></span><em>Goal</em></div>
     </div>
+  </section>
+
+  <section class="card" id="pfCard" aria-label="Your wallet">
+    <header><h2 id="pfTitle">Your wallet</h2><span class="muted" id="pfMeta" style="font-size:12px"></span>
+      <button type="button" class="btn sm" id="pfPaper" hidden>Use as paper balance</button>
+      <button type="button" class="btn sm" id="pfScan">Scan wallet</button></header>
+    <div id="pfBody"></div>
   </section>
 
   <div class="main">
@@ -428,16 +459,9 @@ const HL = (() => {
     return { r: s.r, s: s.s, v: s.v };
   }
 
-  // approveAgent typed data, signed by the user's MetaMask (eth_signTypedData_v4)
-  function approveAgentTypedData(agentAddress, agentName, nonce, isMainnet, signatureChainIdHex) {
-    const action = {
-      type: "approveAgent",
-      agentAddress,
-      agentName,
-      nonce,
-      signatureChainId: signatureChainIdHex,
-      hyperliquidChain: isMainnet ? "Mainnet" : "Testnet",
-    };
+  // User-signed actions (signed by the user's MetaMask with eth_signTypedData_v4)
+  function userSignedTypedData(primaryType, fields, action, isMainnet, signatureChainIdHex) {
+    action = { ...action, signatureChainId: signatureChainIdHex, hyperliquidChain: isMainnet ? "Mainnet" : "Testnet" };
     const typedData = {
       domain: { name: "HyperliquidSignTransaction", version: "1",
                 chainId: parseInt(signatureChainIdHex, 16),
@@ -446,14 +470,23 @@ const HL = (() => {
         EIP712Domain: [
           { name: "name", type: "string" }, { name: "version", type: "string" },
           { name: "chainId", type: "uint256" }, { name: "verifyingContract", type: "address" }],
-        "HyperliquidTransaction:ApproveAgent": [
-          { name: "hyperliquidChain", type: "string" }, { name: "agentAddress", type: "address" },
-          { name: "agentName", type: "string" }, { name: "nonce", type: "uint64" }],
+        [primaryType]: [{ name: "hyperliquidChain", type: "string" }, ...fields],
       },
-      primaryType: "HyperliquidTransaction:ApproveAgent",
+      primaryType,
       message: action,
     };
     return { action, typedData };
+  }
+  function approveAgentTypedData(agentAddress, agentName, nonce, isMainnet, signatureChainIdHex) {
+    return userSignedTypedData("HyperliquidTransaction:ApproveAgent",
+      [{ name: "agentAddress", type: "address" }, { name: "agentName", type: "string" }, { name: "nonce", type: "uint64" }],
+      { type: "approveAgent", agentAddress, agentName, nonce }, isMainnet, signatureChainIdHex);
+  }
+  // Move USDC between the Hyperliquid spot and perps (trading) balances
+  function usdClassTransferTypedData(amount, toPerp, nonce, isMainnet, signatureChainIdHex) {
+    return userSignedTypedData("HyperliquidTransaction:UsdClassTransfer",
+      [{ name: "amount", type: "string" }, { name: "toPerp", type: "bool" }, { name: "nonce", type: "uint64" }],
+      { type: "usdClassTransfer", amount: floatToWire(amount), toPerp, nonce }, isMainnet, signatureChainIdHex);
   }
 
   // Same rules as the Python SDK
@@ -483,7 +516,7 @@ const HL = (() => {
   }
   function orderAction(wires, grouping = "na") { return { type: "order", orders: wires, grouping }; }
 
-  return { packb, actionHash, signL1, approveAgentTypedData, floatToWire, roundPx, roundSz,
+  return { packb, actionHash, signL1, userSignedTypedData, approveAgentTypedData, usdClassTransferTypedData, floatToWire, roundPx, roundSz,
            orderWire, orderAction, be };
 })();
 if (typeof module !== "undefined") module.exports = HL;
@@ -953,6 +986,7 @@ async function depositUsdc(amount) {
   const data = ERC20.encodeFunctionData("transfer", [br.bridge, units]);
   const hash = await eth("eth_sendTransaction", [{ from: S.wallet.address, to: br.usdc, data }]);
   log(`Deposit sent: ${amount} USDC to Hyperliquid ${S.net}. Tx ${hash}. It should be credited in about a minute.`, "g");
+  rescanSoon(70000); refreshEquitySoon();
   return hash;
 }
 
@@ -1030,6 +1064,201 @@ function renderWallet() {
   }
 }
 
+// ============================================================ wallet scan (all networks + Hyperliquid)
+const SCAN = {
+  1:      { rpc: ["https://ethereum-rpc.publicnode.com", "https://eth.llamarpc.com"], tokens: [["USDC", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48"], ["USDT", "0xdAC17F958D2ee523a2206206994597C13D831ec7"], ["WETH", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"], ["WBTC", "0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599"]] },
+  42161:  { rpc: ["https://arbitrum-one-rpc.publicnode.com", "https://arb1.arbitrum.io/rpc"], tokens: [["USDC", "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"], ["USDC.e", "0xFF970A61A04b1cA14834A43f5dE4533eBDDB5CC8"], ["USDT", "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"], ["WETH", "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1"], ["WBTC", "0x2f2a2543B76A4166549F7aaB2e75Bef0aefC5B0f"]] },
+  8453:   { rpc: ["https://base-rpc.publicnode.com", "https://mainnet.base.org"], tokens: [["USDC", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"], ["WETH", "0x4200000000000000000000000000000000000006"]] },
+  10:     { rpc: ["https://optimism-rpc.publicnode.com", "https://mainnet.optimism.io"], tokens: [["USDC", "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85"], ["USDT", "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"], ["WETH", "0x4200000000000000000000000000000000000006"]] },
+  137:    { rpc: ["https://polygon-bor-rpc.publicnode.com", "https://polygon-rpc.com"], tokens: [["USDC", "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"], ["USDT", "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"], ["WETH", "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"]] },
+  56:     { rpc: ["https://bsc-rpc.publicnode.com", "https://bsc-dataseed.binance.org"], tokens: [["USDC", "0x8AC76a51cc950d9822D68b83fE1Ad97B32Cd580d"], ["USDT", "0x55d398326f99059fF775485246999027B3197955"]] },
+  43114:  { rpc: ["https://avalanche-c-chain-rpc.publicnode.com", "https://api.avax.network/ext/bc/C/rpc"], tokens: [["USDC", "0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E"], ["USDT", "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"]] },
+  999:    { rpc: ["https://rpc.hyperliquid.xyz/evm"], tokens: [] },
+  421614: { rpc: ["https://arbitrum-sepolia-rpc.publicnode.com", "https://sepolia-rollup.arbitrum.io/rpc"], tokens: [["USDC", "0x1baAbB04529D43a73232B713C0FE471f7c7334d5"]], testnetOnly: true },
+};
+const STABLE = new Set(["USDC", "USDC.e", "USDT", "USDT0", "USDH", "USDE"]);
+const PRICE_KEY = { ETH: "ETH", WETH: "ETH", WBTC: "BTC", BTC: "BTC", UBTC: "BTC", UETH: "ETH", BNB: "BNB", AVAX: "AVAX", POL: "POL", HYPE: "HYPE", SOL: "SOL", USOL: "SOL" };
+const HL_COLOR = "#e9b95c";
+S.pf = null; S.pfBusy = false; S.pfShowSmall = false; S.pfMove = false;
+
+async function rpcBatch(urls, calls) {
+  let last;
+  for (const url of urls) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 9000);
+    try {
+      const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(calls), signal: ctl.signal });
+      const j = await r.json();
+      if (!Array.isArray(j)) throw new Error("no batch support");
+      return Object.fromEntries(j.map(x => [x.id, x]));
+    } catch (e) { last = e; } finally { clearTimeout(t); }
+  }
+  throw last || new Error("unreachable");
+}
+async function scanChain(id, addr) {
+  const cfg = SCAN[id], chain = chainById(id), calls = [{ jsonrpc: "2.0", id: 0, method: "eth_getBalance", params: [addr, "latest"] }];
+  cfg.tokens.forEach(([, a], i) => {
+    calls.push({ jsonrpc: "2.0", id: 1 + i * 2, method: "eth_call", params: [{ to: a, data: ERC20.encodeFunctionData("balanceOf", [addr]) }, "latest"] });
+    calls.push({ jsonrpc: "2.0", id: 2 + i * 2, method: "eth_call", params: [{ to: a, data: ERC20.encodeFunctionData("decimals") }, "latest"] });
+  });
+  const res = await rpcBatch(cfg.rpc, calls), rows = [];
+  if (res[0]?.result) rows.push({ src: chain.name, chainId: id, color: chain.color, sym: chain.native, amount: Number(ethers.formatEther(res[0].result)), kind: "native" });
+  cfg.tokens.forEach(([sym, a], i) => {
+    const b = res[1 + i * 2]?.result, d = res[2 + i * 2]?.result;
+    if (!b || !d || b === "0x") return;
+    try { rows.push({ src: chain.name, chainId: id, color: chain.color, sym, token: a, amount: Number(ethers.formatUnits(BigInt(b), Number(BigInt(d)))), kind: "token" }); } catch {}
+  });
+  return rows;
+}
+async function scanHyperliquid(addr) {
+  const net = S.net, rows = [];
+  const [perp, spot] = await Promise.all([info({ type: "clearinghouseState", user: addr }, net), info({ type: "spotClearinghouseState", user: addr }, net).catch(() => ({ balances: [] }))]);
+  const upnl = (perp.assetPositions || []).reduce((a, p) => a + (+p.position.unrealizedPnl || 0), 0);
+  rows.push({ src: `Hyperliquid ${net} · trading`, color: HL_COLOR, sym: "USDC", amount: +perp.marginSummary.accountValue, usd: +perp.marginSummary.accountValue, kind: "hl-perp",
+    note: `${money(+perp.withdrawable)} free${(perp.assetPositions || []).length ? ` · ${perp.assetPositions.length} open position${perp.assetPositions.length > 1 ? "s" : ""} (${sgnMoney(upnl)})` : ""}` });
+  const bals = (spot.balances || []).filter(b => +b.total > 0);
+  let px = {};
+  if (bals.some(b => b.coin !== "USDC")) {
+    try {
+      const [meta, ctxs] = await info({ type: "spotMetaAndAssetCtxs" }, net);
+      for (const b of bals) {
+        const tok = meta.tokens.find(t => t.name === b.coin); if (!tok) continue;
+        const i = meta.universe.findIndex(u => u.tokens[0] === tok.index && u.tokens[1] === 0);
+        if (i >= 0) px[b.coin] = +(ctxs[i].midPx || ctxs[i].markPx);
+      }
+    } catch {}
+  }
+  for (const b of bals) {
+    const amt = +b.total, avail = amt - (+b.hold || 0);
+    rows.push({ src: `Hyperliquid ${net} · spot`, color: HL_COLOR, sym: b.coin, amount: amt, avail, kind: b.coin === "USDC" ? "hl-spot-usdc" : "hl-spot", usd: b.coin === "USDC" ? amt : (px[b.coin] ? amt * px[b.coin] : null) });
+  }
+  return rows;
+}
+async function scanWallet() {
+  if (!S.wallet.address || S.pfBusy) return;
+  S.pfBusy = true; renderPortfolio();
+  const addr = S.wallet.address, chains = Object.keys(SCAN).map(Number).filter(id => !SCAN[id].testnetOnly || S.net === "testnet");
+  let mids = {};
+  const jobs = [info({ type: "allMids" }, "mainnet").then(m => { mids = m; }).catch(() => {}),
+    ...chains.map(id => scanChain(id, addr).then(r => ({ id, rows: r }), e => ({ id, err: e.message }))),
+    scanHyperliquid(addr).then(r => ({ id: "hl", rows: r }), e => ({ id: "hl", err: e.message }))];
+  const res = (await Promise.all(jobs)).filter(Boolean);
+  const rows = [], errors = [];
+  for (const r of res) { if (r.err) errors.push(r.id === "hl" ? "Hyperliquid" : chainById(r.id).name); else rows.push(...r.rows); }
+  for (const r of rows) {
+    if (r.usd !== undefined) continue;
+    r.usd = STABLE.has(r.sym) ? r.amount : PRICE_KEY[r.sym] && mids[PRICE_KEY[r.sym]] ? r.amount * +mids[PRICE_KEY[r.sym]] : null;
+    if (r.chainId === 421614) r.usd = r.sym === "USDC" ? r.amount : 0;           // testnet coins have no real value
+  }
+  if (address_changed(addr)) { S.pfBusy = false; return; }
+  S.pf = { at: Date.now(), rows, errors, net: S.net };
+  S.pfBusy = false; S.pfMove = false;
+  const found = rows.filter(r => (r.usd || 0) >= 0.01 || r.kind === "hl-perp").length;
+  log(`Wallet scanned: ${found} holdings across ${chains.length} networks and Hyperliquid${errors.length ? ` (couldn't reach ${errors.join(", ")})` : ""}`);
+  renderPortfolio();
+}
+function address_changed(addr) { return S.wallet.address !== addr; }
+let pfTimer; function rescanSoon(ms = 4000) { clearTimeout(pfTimer); pfTimer = setTimeout(scanWallet, ms); }
+
+function rowAction(r, i) {
+  const br = BRIDGE[S.net];
+  if (r.kind === "hl-perp") return `<span class="tag gold">Bot trades this</span>`;
+  if (r.kind === "hl-spot-usdc") {
+    if (!(r.avail >= 1)) return `<span class="tag">In use</span>`;
+    if (S.pfMove === i) return `<div class="pf-move"><input type="number" id="pfMoveAmt" min="1" step="0.01" value="${Math.floor(r.avail * 100) / 100}" aria-label="Amount to move"><button type="button" class="btn sm primary" data-act="move-go">Sign in MetaMask</button><button type="button" class="btn sm" data-act="move-cancel">Cancel</button></div>`;
+    return `<button type="button" class="btn sm primary" data-act="move" data-i="${i}">Move to trading</button>`;
+  }
+  if (r.kind === "token" && r.sym === "USDC" && r.chainId === br.chainId) {
+    return r.amount >= MIN_DEPOSIT ? `<button type="button" class="btn sm primary" data-act="deposit" data-amt="${Math.floor(r.amount * 100) / 100}">Deposit to trade</button>` : `<span class="tag">Below ${MIN_DEPOSIT} USDC minimum</span>`;
+  }
+  if (r.kind === "token" && r.sym === "USDC" && (r.chainId === 42161 || r.chainId === 421614)) return `<span class="tag">Switch to ${r.chainId === 42161 ? "Mainnet" : "Testnet"} to deposit</span>`;
+  if (r.kind === "hl-spot") return `<a class="lnk" href="${S.net === "mainnet" ? "https://app.hyperliquid.xyz/trade" : "https://app.hyperliquid-testnet.xyz/trade"}" target="_blank" rel="noopener">Sell for USDC ↗</a>`;
+  if (r.chainId === 421614) return `<span class="tag">Testnet</span>`;
+  const how = r.sym === "USDC.e" ? "Swap to native USDC" : r.sym === "USDC" ? "Bridge to Arbitrum" : "Swap to USDC";
+  return `<a class="lnk" href="https://app.hyperliquid.xyz/portfolio" target="_blank" rel="noopener" title="${how} on ${esc(r.src)}, then deposit. Hyperliquid's own app supports more deposit routes.">${how} ↗</a>`;
+}
+function renderPortfolio() {
+  const card = $("pfCard"), body = $("pfBody");
+  $("pfPaper").hidden = !(S.mode === "paper" && S.pf);
+  $("pfScan").hidden = !S.wallet.address;
+  $("pfScan").disabled = S.pfBusy;
+  $("pfScan").innerHTML = S.pfBusy ? `<span class="spin"></span>Scanning…` : "Scan again";
+  if (!S.wallet.address) {
+    $("pfMeta").textContent = "";
+    body.innerHTML = `<div class="pf-empty"><p>Connect MetaMask and GoalBot scans your wallet on ${Object.keys(SCAN).length - 1} networks, plus your Hyperliquid account. It shows what you hold and what can be put to work for trading.</p><button type="button" class="btn primary" id="pfConnect">${window.ethereum ? "Connect MetaMask" : "Get MetaMask"}</button></div>`;
+    $("pfConnect").onclick = () => window.ethereum ? connectWallet() : openWallet();
+    return;
+  }
+  const pf = S.pf;
+  if (!pf) { $("pfMeta").textContent = short(S.wallet.address); body.innerHTML = `<div class="pf-empty"><p><span class="spin"></span>Scanning ${Object.keys(SCAN).length - 1} networks and Hyperliquid…</p></div>`; return; }
+  const br = BRIDGE[S.net];
+  const total = pf.rows.reduce((a, r) => a + (r.usd || 0), 0);
+  const trading = pf.rows.filter(r => r.kind === "hl-perp").reduce((a, r) => a + r.usd, 0);
+  const ready = pf.rows.filter(r => r.kind === "hl-spot-usdc").reduce((a, r) => a + (r.avail || 0), 0)
+              + pf.rows.filter(r => r.kind === "token" && r.sym === "USDC" && r.chainId === br.chainId && r.amount >= MIN_DEPOSIT).reduce((a, r) => a + r.amount, 0);
+  const other = Math.max(total - trading - ready, 0);
+  $("pfMeta").textContent = `${short(S.wallet.address)} · scanned ${new Date(pf.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
+  let rows = pf.rows.map((r, i) => ({ ...r, i }));
+  rows.sort((a, b) => (b.kind.startsWith("hl") - a.kind.startsWith("hl")) || ((b.usd || 0) - (a.usd || 0)));
+  const small = rows.filter(r => r.kind !== "hl-perp" && !((r.usd || 0) >= 1) && !(r.usd == null && r.amount > 0));
+  const shown = S.pfShowSmall ? rows : rows.filter(r => !small.includes(r));
+  body.innerHTML = `
+    <div class="pf-sum">
+      <div><span>Total found</span><b>${money(total)}</b><small>${pf.rows.filter(r => (r.usd || 0) >= 0.01).length} holdings${pf.net === "testnet" ? " · includes testnet play money" : ""}</small></div>
+      <div class="hi"><span>Trading balance</span><b>${money(trading)}</b><small>Hyperliquid ${pf.net}, used by the bot</small></div>
+      <div><span>Ready to move in</span><b>${money(ready)}</b><small>USDC you can add in one step</small></div>
+      <div><span>Elsewhere</span><b>${money(other)}</b><small>needs a swap or bridge first</small></div>
+    </div>
+    <div class="tablewrap" style="max-height:none"><table>
+      <thead><tr><th>Where</th><th>Asset</th><th class="r">Amount</th><th class="r">Value</th><th class="r">Use for trading</th></tr></thead>
+      <tbody>${shown.length ? shown.map(r => `<tr>
+        <td><span class="net"><i style="background:${r.color}"></i>${esc(r.src)}</span>${r.note ? `<div class="muted" style="font-size:12px">${r.note}</div>` : ""}</td>
+        <td class="num">${esc(r.sym)}</td>
+        <td class="r num">${fmt(r.amount, r.amount >= 1000 ? 2 : r.amount >= 1 ? 4 : 6)}</td>
+        <td class="r num">${r.usd == null ? "—" : money(r.usd)}</td>
+        <td class="r">${rowAction(r, r.i)}</td></tr>`).join("") : `<tr class="empty-row"><td colspan="5">Nothing found yet. This wallet looks empty on the scanned networks.</td></tr>`}</tbody>
+    </table></div>
+    <div class="pf-foot">
+      ${small.length ? `<button type="button" class="btn sm" id="pfSmall">${S.pfShowSmall ? "Hide" : "Show"} ${small.length} small or empty balance${small.length > 1 ? "s" : ""}</button>` : ""}
+      <span>Scanned: ${Object.keys(SCAN).filter(id => !SCAN[id].testnetOnly || pf.net === "testnet").map(id => chainById(+id).name).join(", ")}, Hyperliquid ${pf.net}.</span>
+      ${pf.errors.length ? `<span class="down">Couldn't reach: ${pf.errors.join(", ")}.</span>` : ""}
+      <span>Only common tokens are checked. Values use Hyperliquid prices.</span>
+    </div>`;
+  $("pfSmall") && ($("pfSmall").onclick = () => { S.pfShowSmall = !S.pfShowSmall; renderPortfolio(); });
+  body.querySelectorAll("[data-act]").forEach(b => b.onclick = () => pfAction(b));
+}
+async function pfAction(b) {
+  const act = b.dataset.act;
+  if (act === "move") { S.pfMove = +b.dataset.i; renderPortfolio(); $("pfMoveAmt")?.focus(); return; }
+  if (act === "move-cancel") { S.pfMove = false; renderPortfolio(); return; }
+  if (act === "move-go") {
+    const amt = Math.floor(parseFloat($("pfMoveAmt").value) * 100) / 100, r = S.pf.rows[S.pfMove];
+    if (!(amt >= 1)) return toast("Enter at least 1 USDC");
+    if (amt > r.avail + 1e-9) return toast("That's more than your available spot USDC");
+    b.disabled = true;
+    try { await moveSpotToPerps(amt); toast("Moved to trading balance"); rescanSoon(2500); refreshEquitySoon(); }
+    catch (e) { toast(e.message || "Transfer failed"); log("Transfer failed: " + (e.message || e), "e"); b.disabled = false; }
+    return;
+  }
+  if (act === "deposit") {
+    const br = BRIDGE[S.net];
+    try { if (S.wallet.chainId !== br.chainId) await switchChain(br.chainId); } catch (e) { return toast(e.message || "Network switch rejected"); }
+    openWallet();
+    setTimeout(() => { const i = $("depAmt"); if (i) { i.value = b.dataset.amt; i.dispatchEvent(new Event("input")); i.scrollIntoView({ block: "center" }); } }, 150);
+  }
+}
+async function moveSpotToPerps(amount) {
+  const chainId = await eth("eth_chainId"), nonce = nextNonce();
+  const { action, typedData } = HL.usdClassTransferTypedData(amount, true, nonce, S.net === "mainnet", chainId);
+  log(`Asking MetaMask to sign: move ${fmt(amount, 2)} USDC from Hyperliquid spot to your trading balance…`);
+  const sig = ethers.Signature.from(await eth("eth_signTypedData_v4", [S.wallet.address, JSON.stringify(typedData)]));
+  const r = await fetch(API[S.net] + "/exchange", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, nonce, signature: { r: sig.r, s: sig.s, v: sig.v }, vaultAddress: null }) });
+  const j = await r.json();
+  if (j.status !== "ok") throw new Error(typeof j.response === "string" ? j.response : JSON.stringify(j));
+  log(`Moved ${fmt(amount, 2)} USDC to your Hyperliquid ${S.net} trading balance`, "g");
+}
+function refreshEquitySoon() { setTimeout(async () => { if (S.mode === "live" && S.wallet.address && !S.running) { S.equity = await Broker.equity().catch(() => S.equity); render(); } }, 2000); }
+
 // bot authorization (agent key)
 function agentKey() { return `agent.${S.net}.${(S.wallet.address || "").toLowerCase()}`; }
 function loadAgent() { const k = S.wallet.address && LS.get(agentKey(), null); S.agent = k ? new ethers.Wallet(k) : null; }
@@ -1061,6 +1290,7 @@ function revokeAgent() { LS.del(agentKey()); S.agent = null; log("Bot key remove
 function onWalletChange() {
   if (S.running && S.mode === "live") stopBot();
   loadAgent(); loadRun(); render(); refreshPreview();
+  S.pf = null; renderPortfolio(); if (S.wallet.address) scanWallet();
   if ($("walletDlg").open) { loadBalances().then(renderWallet); renderWallet(); }
 }
 if (window.ethereum) {
@@ -1174,6 +1404,12 @@ function render() {
       : `The loss floor of ${money(c.floor)} was hit. All positions were closed and the bot stopped.`;
     done.classList.toggle("gold", r.finished === "GOAL"); done.classList.toggle("warn", r.finished !== "GOAL");
   }
+
+  const rb = $("rangeBanner"), outOfRange = !S.running && !r.finished && eq != null && (eq <= c.floor || eq >= c.goal);
+  rb.classList.toggle("show", outOfRange);
+  if (outOfRange) rb.textContent = eq <= c.floor
+    ? `Your account value (${money(eq)}) is at or below the loss floor (${money(c.floor)}). Lower the floor under Goal & strategy before starting.`
+    : `Your account value (${money(eq)}) is already above the goal (${money(c.goal)}). Raise the goal under Goal & strategy before starting.`;
 
   // positions
   const pb = $("posBody"), open = openCoins();
@@ -1360,6 +1596,17 @@ S.view = S.cfg.coins[0];
 $("currency").innerHTML = CURRENCIES.map(c => `<option ${c === S.cur ? "selected" : ""}>${c}</option>`).join("");
 writeForm(); loadRun(); initChart(); renderChips();
 $("walletBtn").addEventListener("click", openWallet);
+$("pfScan").addEventListener("click", scanWallet);
+$("pfPaper").addEventListener("click", () => {
+  if (S.running) return toast("Stop the bot first");
+  if (S.run.startEquity) return toast("Reset goal & history first, then use your wallet value as the paper balance");
+  const total = S.pf.rows.reduce((a, r) => a + (r.usd || 0), 0);
+  if (!(total >= 10)) return toast("Your wallet holds less than $10, too small for a paper balance");
+  const ratioG = S.cfg.goal / S.cfg.paperStart, ratioF = S.cfg.floor / S.cfg.paperStart;
+  S.cfg.paperStart = Math.round(total * 100) / 100; S.cfg.goal = Math.round(total * ratioG * 100) / 100; S.cfg.floor = Math.round(total * ratioF * 100) / 100;
+  LS.set("cfg", S.cfg); writeForm(); S.equity = S.cfg.paperStart; render();
+  toast(`Paper balance set to ${money(total)}. Goal and floor scaled to match.`);
+});
 $("wdClose").addEventListener("click", () => $("walletDlg").close());
 $("walletDlg").addEventListener("click", e => { if (e.target === $("walletDlg")) $("walletDlg").close(); });
 $("startBtn").addEventListener("click", () => S.running ? stopBot() : startBot());
@@ -1375,7 +1622,7 @@ $("currency").addEventListener("change", async e => {
   readForm();                                  // keep USD values fixed
   S.cur = e.target.value; LS.set("currency", S.cur);
   if (S.cur !== "USD" && !S.fx.rates[S.cur]) await loadFx(true);
-  writeForm(); render(); if ($("walletDlg").open) renderWallet();
+  writeForm(); render(); renderPortfolio(); if ($("walletDlg").open) renderWallet();
 });
 let resetArm = 0;
 $("resetBtn").addEventListener("click", () => {
@@ -1385,14 +1632,14 @@ $("resetBtn").addEventListener("click", () => {
   S.run = freshRun(); saveRun(); S.equity = null; $("resetBtn").textContent = "Reset goal & history";
   log("Goal and trade history reset"); refreshPreview();
 });
-$("modeSeg").addEventListener("click", e => { const v = e.target.dataset?.v; if (!v || S.running || v === S.mode) return; S.mode = v; LS.set("mode", v); loadRun(); S.metaNet = null; S.equity = null; render(); refreshPreview(); });
-$("netSeg").addEventListener("click", e => { const v = e.target.dataset?.v; if (!v || S.running || v === S.net) return; S.net = v; LS.set("net", v); loadAgent(); loadRun(); S.metaNet = null; S.equity = null; render(); refreshPreview(); });
+$("modeSeg").addEventListener("click", e => { const v = e.target.dataset?.v; if (!v || S.running || v === S.mode) return; S.mode = v; LS.set("mode", v); loadRun(); S.metaNet = null; S.equity = null; render(); renderPortfolio(); refreshPreview(); });
+$("netSeg").addEventListener("click", e => { const v = e.target.dataset?.v; if (!v || S.running || v === S.net) return; S.net = v; LS.set("net", v); loadAgent(); loadRun(); S.metaNet = null; S.equity = null; render(); refreshPreview(); if (S.wallet.address) { S.pf = null; scanWallet(); } });
 $("cfgForm").addEventListener("change", e => { if (e.target.id === "addCoin") return; readForm(); if (["interval", "fast", "slow"].includes(e.target.id)) { S.candles = {}; refreshPreview(); } else render(); });
 window.addEventListener("beforeunload", e => { if (S.running) { e.preventDefault(); e.returnValue = ""; } });
 setInterval(() => { if (!S.running && !document.hidden) refreshPreview(); }, 30000);
 if (location.protocol === "file:") log("Opened as a file. MetaMask only works when the page is served, so use the start script or host it online. Paper mode works either way.", "w");
-render();
-loadFx().then(() => { writeForm(); render(); });
+render(); renderPortfolio();
+loadFx().then(() => { writeForm(); render(); renderPortfolio(); });
 refreshPreview();
 log("Welcome. Paper mode uses real Hyperliquid prices with pretend money. Pick markets and a goal, then press Start.");
 </script>
